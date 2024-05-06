@@ -12,4 +12,4 @@ xdg-shell-client-protocol.h:
 	wayland-scanner client-header $(PROTO_DIR)/stable/xdg-shell/xdg-shell.xml $@
 
 clean:
-	rm -rf *-protocol.*
+	rm -rf *-protocol.* client
