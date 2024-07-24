@@ -1,6 +1,8 @@
+#include "virtual-keyboard-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/input-event-codes.h>
 #include <stdbool.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -8,6 +10,7 @@
 #include <unistd.h>
 #include <wayland-client-protocol.h>
 #include <wayland-client.h>
+#include <xkbcommon/xkbcommon.h>
 
 /* Shared memory support code */
 static void randname(char *buf) {
@@ -58,10 +61,14 @@ struct client_state {
     struct wl_shm *wl_shm;
     struct wl_compositor *wl_compositor;
     struct xdg_wm_base *xdg_wm_base;
+    struct wl_seat *wl_seat;
+    struct zwp_virtual_keyboard_manager_v1 *vk_manager;
     /* Objects */
     struct wl_surface *wl_surface;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *xdg_toplevel;
+    struct wl_keyboard *wl_keyboard;
+    struct zwp_virtual_keyboard_v1 *vk;
 };
 
 static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer) {
@@ -113,6 +120,7 @@ static struct wl_buffer *draw_frame(struct client_state *state) {
 
 static void xdg_surface_configure(void *data, struct xdg_surface *xdg_surface,
                                   uint32_t serial) {
+    puts("xdg_surface.configure");
     struct client_state *state = data;
     xdg_surface_ack_configure(xdg_surface, serial);
 
@@ -134,6 +142,37 @@ static const struct xdg_wm_base_listener xdg_wm_base_listener = {
     .ping = xdg_wm_base_ping,
 };
 
+static void noop() {}
+
+static bool got_keymap = false;
+
+void wl_keyboard_modifiers(void *data, struct wl_keyboard *wl_keyboard,
+                           uint32_t serial, uint32_t mods_depressed,
+                           uint32_t mods_latched, uint32_t mods_locked,
+                           uint32_t group) {
+    puts("wl_keyboard.modifiers");
+
+#define COLOR_RESET "\033[0m"
+#define COLOR_RED "\033[0;31m"
+    if (!got_keymap)
+        puts(COLOR_RED "Received modifier without keymap" COLOR_RESET);
+}
+
+void wl_keyboard_keymap(void *data, struct wl_keyboard *wl_keyboard,
+                        uint32_t format, int32_t fd, uint32_t size) {
+    puts("wl_keyboard.keymap");
+    got_keymap = true;
+}
+
+static const struct wl_keyboard_listener wl_keyboard_listener = {
+    .keymap = wl_keyboard_keymap,
+    .enter = noop,
+    .leave = noop,
+    .key = noop,
+    .modifiers = wl_keyboard_modifiers,
+    .repeat_info = noop,
+};
+
 static void registry_global(void *data, struct wl_registry *wl_registry,
                             uint32_t name, const char *interface,
                             uint32_t version) {
@@ -149,6 +188,13 @@ static void registry_global(void *data, struct wl_registry *wl_registry,
             wl_registry_bind(wl_registry, name, &xdg_wm_base_interface, 1);
         xdg_wm_base_add_listener(state->xdg_wm_base, &xdg_wm_base_listener,
                                  state);
+    } else if (!strcmp(interface, wl_seat_interface.name)) {
+        state->wl_seat =
+            wl_registry_bind(wl_registry, name, &wl_seat_interface, 8);
+    } else if (!strcmp(interface,
+                       zwp_virtual_keyboard_manager_v1_interface.name)) {
+        state->vk_manager = wl_registry_bind(
+            wl_registry, name, &zwp_virtual_keyboard_manager_v1_interface, 1);
     }
 }
 
@@ -176,6 +222,34 @@ int main(int argc, char *argv[]) {
     state.xdg_toplevel = xdg_surface_get_toplevel(state.xdg_surface);
     xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
     wl_surface_commit(state.wl_surface);
+
+    puts("Created surface");
+
+    state.vk = zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(
+        state.vk_manager, state.wl_seat);
+    struct xkb_context *xkb_ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    struct xkb_keymap *keymap =
+        xkb_keymap_new_from_names(xkb_ctx, NULL, XKB_KEYMAP_COMPILE_NO_FLAGS);
+    char *keymap_string =
+        xkb_keymap_get_as_string(keymap, XKB_KEYMAP_FORMAT_TEXT_V1);
+    int keymap_size = strlen(keymap_string) + 1;
+    int keymap_fd = allocate_shm_file(keymap_size);
+    char *keymap_dst = mmap(NULL, keymap_size, PROT_READ | PROT_WRITE,
+                            MAP_SHARED, keymap_fd, 0);
+    memcpy(keymap_dst, keymap_string, keymap_size);
+
+    zwp_virtual_keyboard_v1_keymap(state.vk, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1,
+                                   keymap_fd, keymap_size);
+    zwp_virtual_keyboard_v1_key(state.vk, 0, KEY_X, 1);
+    zwp_virtual_keyboard_v1_key(state.vk, 10, KEY_X, 0);
+    zwp_virtual_keyboard_v1_destroy(state.vk);
+
+    puts("Destroyed virtual keyboard");
+
+    state.wl_keyboard = wl_seat_get_keyboard(state.wl_seat);
+    wl_keyboard_add_listener(state.wl_keyboard, &wl_keyboard_listener, NULL);
+
+    puts("Got keyboard");
 
     while (wl_display_dispatch(state.wl_display)) {
         /* This space deliberately left blank */
