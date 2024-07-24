@@ -58,8 +58,12 @@ struct client_state {
     struct wl_shm *wl_shm;
     struct wl_compositor *wl_compositor;
     struct xdg_wm_base *xdg_wm_base;
+    struct wl_subcompositor *wl_subcompositor;
+    struct wl_seat *wl_seat;
     /* Objects */
     struct wl_surface *wl_surface;
+    struct wl_surface *wl_surface_subsurface;
+    struct wl_subsurface *wl_subsurface;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *xdg_toplevel;
 };
@@ -73,8 +77,8 @@ static const struct wl_buffer_listener wl_buffer_listener = {
     .release = wl_buffer_release,
 };
 
-static struct wl_buffer *draw_frame(struct client_state *state) {
-    const int width = 800, height = 800;
+static struct wl_buffer *draw_frame(struct client_state *state, int width,
+                                    int height) {
     int stride = width * 4;
     int size = stride * height;
 
@@ -116,9 +120,13 @@ static void xdg_surface_configure(void *data, struct xdg_surface *xdg_surface,
     struct client_state *state = data;
     xdg_surface_ack_configure(xdg_surface, serial);
 
-    struct wl_buffer *buffer = draw_frame(state);
+    struct wl_buffer *buffer = draw_frame(state, 800, 800);
     wl_surface_attach(state->wl_surface, buffer, 0, 0);
     wl_surface_commit(state->wl_surface);
+
+    struct wl_buffer *buffer_sub = draw_frame(state, 105, 105);
+    wl_surface_attach(state->wl_surface_subsurface, buffer_sub, 0, 0);
+    wl_surface_commit(state->wl_surface_subsurface);
 }
 
 static const struct xdg_surface_listener xdg_surface_listener = {
@@ -149,6 +157,12 @@ static void registry_global(void *data, struct wl_registry *wl_registry,
             wl_registry_bind(wl_registry, name, &xdg_wm_base_interface, 1);
         xdg_wm_base_add_listener(state->xdg_wm_base, &xdg_wm_base_listener,
                                  state);
+    } else if (!strcmp(interface, wl_subcompositor_interface.name)) {
+        state->wl_subcompositor =
+            wl_registry_bind(wl_registry, name, &wl_subcompositor_interface, 1);
+    } else if (!strcmp(interface, wl_seat_interface.name)) {
+        state->wl_seat =
+            wl_registry_bind(wl_registry, name, &wl_seat_interface, 1);
     }
 }
 
@@ -160,6 +174,21 @@ static void registry_global_remove(void *data, struct wl_registry *wl_registry,
 static const struct wl_registry_listener wl_registry_listener = {
     .global = registry_global,
     .global_remove = registry_global_remove,
+};
+
+static void noop() {}
+static const struct wl_pointer_listener wl_pointer_listener = {
+    .enter = noop,
+    .leave = noop,
+    .motion = noop,
+    .button = noop,
+    .axis = noop,
+    .frame = noop,
+    .axis_source = noop,
+    .axis_stop = noop,
+    .axis_discrete = noop,
+    .axis_value120 = noop,
+    .axis_relative_direction = noop,
 };
 
 int main(int argc, char *argv[]) {
@@ -176,6 +205,15 @@ int main(int argc, char *argv[]) {
     state.xdg_toplevel = xdg_surface_get_toplevel(state.xdg_surface);
     xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
     wl_surface_commit(state.wl_surface);
+
+    state.wl_surface_subsurface =
+        wl_compositor_create_surface(state.wl_compositor);
+    state.wl_subsurface = wl_subcompositor_get_subsurface(
+        state.wl_subcompositor, state.wl_surface_subsurface, state.wl_surface);
+    wl_subsurface_set_position(state.wl_subsurface, 100, 100);
+
+    struct wl_pointer *pointer = wl_seat_get_pointer(state.wl_seat);
+    wl_pointer_add_listener(pointer, &wl_pointer_listener, NULL);
 
     while (wl_display_dispatch(state.wl_display)) {
         /* This space deliberately left blank */
