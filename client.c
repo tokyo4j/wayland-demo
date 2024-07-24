@@ -1,3 +1,4 @@
+#include "xdg-decoration-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -58,10 +59,12 @@ struct client_state {
     struct wl_shm *wl_shm;
     struct wl_compositor *wl_compositor;
     struct xdg_wm_base *xdg_wm_base;
+    struct zxdg_decoration_manager_v1 *deco_manager;
     /* Objects */
     struct wl_surface *wl_surface;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *xdg_toplevel;
+    struct zxdg_toplevel_decoration_v1 *deco;
 };
 
 static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer) {
@@ -74,7 +77,7 @@ static const struct wl_buffer_listener wl_buffer_listener = {
 };
 
 static struct wl_buffer *draw_frame(struct client_state *state) {
-    const int width = 800, height = 800;
+    const int width = 1, height = 1;
     int stride = width * 4;
     int size = stride * height;
 
@@ -149,6 +152,9 @@ static void registry_global(void *data, struct wl_registry *wl_registry,
             wl_registry_bind(wl_registry, name, &xdg_wm_base_interface, 1);
         xdg_wm_base_add_listener(state->xdg_wm_base, &xdg_wm_base_listener,
                                  state);
+    } else if (!strcmp(interface, zxdg_decoration_manager_v1_interface.name)) {
+        state->deco_manager = wl_registry_bind(
+            wl_registry, name, &zxdg_decoration_manager_v1_interface, 1);
     }
 }
 
@@ -175,6 +181,10 @@ int main(int argc, char *argv[]) {
     xdg_surface_add_listener(state.xdg_surface, &xdg_surface_listener, &state);
     state.xdg_toplevel = xdg_surface_get_toplevel(state.xdg_surface);
     xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
+    state.deco = zxdg_decoration_manager_v1_get_toplevel_decoration(
+        state.deco_manager, state.xdg_toplevel);
+    zxdg_toplevel_decoration_v1_set_mode(
+        state.deco, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
     wl_surface_commit(state.wl_surface);
 
     while (wl_display_dispatch(state.wl_display)) {
