@@ -6,6 +6,7 @@
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
+#include <uv.h>
 #include <wayland-client-protocol.h>
 #include <wayland-client.h>
 
@@ -66,6 +67,9 @@ struct client_state {
 
     float offset;
     uint32_t last_frame;
+
+    uv_loop_t *loop;
+    uv_poll_t poll_handle;
 };
 
 static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer) {
@@ -201,6 +205,19 @@ static const struct wl_registry_listener wl_registry_listener = {
     .global_remove = registry_global_remove,
 };
 
+static void on_wayland_event(uv_poll_t *handle, int status, int events) {
+    struct client_state *state = handle->data;
+    if (events & UV_READABLE) {
+        if (wl_display_dispatch(state->wl_display) == -1) {
+            fprintf(stderr, "Failed to dispatch Wayland events.\n");
+            uv_poll_stop(&state->poll_handle);
+            uv_close((uv_handle_t *)&state->poll_handle, NULL);
+            uv_stop(state->loop);
+        }
+    }
+    wl_display_flush(state->wl_display);
+}
+
 int main(int argc, char *argv[]) {
     struct client_state state = {0};
     state.wl_display = wl_display_connect(NULL);
@@ -218,10 +235,14 @@ int main(int argc, char *argv[]) {
 
     struct wl_callback *cb = wl_surface_frame(state.wl_surface);
     wl_callback_add_listener(cb, &wl_surface_frame_listener, &state);
+    wl_display_flush(state.wl_display);
 
-    while (wl_display_dispatch(state.wl_display) != -1) {
-        /* This space deliberately left blank */
-    }
+    state.loop = uv_default_loop();
+    state.poll_handle.data = &state;
+    uv_poll_init(state.loop, &state.poll_handle,
+                 wl_display_get_fd(state.wl_display));
+    uv_poll_start(&state.poll_handle, UV_READABLE, on_wayland_event);
+    uv_run(state.loop, UV_RUN_DEFAULT);
 
     return 0;
 }
