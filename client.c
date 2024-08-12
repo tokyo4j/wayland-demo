@@ -63,6 +63,9 @@ struct client_state {
     struct wl_surface *wl_surface;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *xdg_toplevel;
+
+    float offset;
+    uint32_t last_frame;
 };
 
 static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer) {
@@ -97,10 +100,11 @@ static struct wl_buffer *draw_frame(struct client_state *state) {
     wl_shm_pool_destroy(pool);
     close(fd);
 
+    int offset = (int)state->offset % 8;
     /* Draw checkerboxed background */
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            if ((x + y / 8 * 8) % 16 < 8)
+            if (((x + offset) + (y + offset) / 8 * 8) % 16 < 8)
                 data[y * width + x] = 0xFF666666;
             else
                 data[y * width + x] = 0xFFEEEEEE;
@@ -133,6 +137,37 @@ static void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base,
 
 static const struct xdg_wm_base_listener xdg_wm_base_listener = {
     .ping = xdg_wm_base_ping,
+};
+
+static const struct wl_callback_listener wl_surface_frame_listener;
+
+static void wl_surface_frame_done(void *data, struct wl_callback *cb,
+                                  uint32_t time) {
+    /* Destroy this callback */
+    wl_callback_destroy(cb);
+
+    /* Request another frame */
+    struct client_state *state = data;
+    cb = wl_surface_frame(state->wl_surface);
+    wl_callback_add_listener(cb, &wl_surface_frame_listener, state);
+
+    /* Update scroll amount at 24 pixels per second */
+    if (state->last_frame != 0) {
+        int elapsed = time - state->last_frame;
+        state->offset += elapsed / 1000.0 * 24;
+    }
+
+    /* Submit a frame for this event */
+    struct wl_buffer *buffer = draw_frame(state);
+    wl_surface_attach(state->wl_surface, buffer, 0, 0);
+    wl_surface_damage_buffer(state->wl_surface, 0, 0, INT32_MAX, INT32_MAX);
+    wl_surface_commit(state->wl_surface);
+
+    state->last_frame = time;
+}
+
+static const struct wl_callback_listener wl_surface_frame_listener = {
+    .done = wl_surface_frame_done,
 };
 
 static void registry_global(void *data, struct wl_registry *wl_registry,
@@ -180,6 +215,9 @@ int main(int argc, char *argv[]) {
     state.xdg_toplevel = xdg_surface_get_toplevel(state.xdg_surface);
     xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
     wl_surface_commit(state.wl_surface);
+
+    struct wl_callback *cb = wl_surface_frame(state.wl_surface);
+    wl_callback_add_listener(cb, &wl_surface_frame_listener, &state);
 
     while (wl_display_dispatch(state.wl_display) != -1) {
         /* This space deliberately left blank */
