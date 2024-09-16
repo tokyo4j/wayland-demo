@@ -177,7 +177,7 @@ int main(int argc, char *argv[]) {
     xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
     wl_surface_commit(state.wl_surface);
 
-    while (wl_display_dispatch(state.wl_display)) {
+    while (wl_display_dispatch(state.wl_display) != -1) {
         /* This space deliberately left blank */
     }
 
