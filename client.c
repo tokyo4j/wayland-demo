@@ -1,4 +1,4 @@
-#include "xdg-shell-client-protocol.h"
+#include "xdg-shell-protocol.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
