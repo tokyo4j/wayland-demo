@@ -58,6 +58,7 @@ struct client_state {
     struct wl_shm *wl_shm;
     struct wl_compositor *wl_compositor;
     struct xdg_wm_base *xdg_wm_base;
+    struct wl_seat *wl_seat;
     /* Objects */
     struct wl_surface *wl_surface;
     struct xdg_surface *xdg_surface;
@@ -149,6 +150,9 @@ static void registry_global(void *data, struct wl_registry *wl_registry,
             wl_registry_bind(wl_registry, name, &xdg_wm_base_interface, 1);
         xdg_wm_base_add_listener(state->xdg_wm_base, &xdg_wm_base_listener,
                                  state);
+    } else if (!strcmp(interface, wl_seat_interface.name)) {
+        state->wl_seat =
+            wl_registry_bind(wl_registry, name, &wl_seat_interface, 8);
     }
 }
 
