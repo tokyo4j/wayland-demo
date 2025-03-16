@@ -75,7 +75,7 @@ static const struct wl_buffer_listener wl_buffer_listener = {
 };
 
 static struct wl_buffer *draw_frame(struct client_state *state) {
-    const int width = 800, height = 800;
+    const int width = 20, height = 20;
     int stride = width * 4;
     int size = stride * height;
 
