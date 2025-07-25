@@ -72,6 +72,8 @@ struct client_state {
 	struct xdg_toplevel *xdg_toplevel;
 
 	int width, height;
+	float offset;
+	bool unmapped;
 
 	uv_loop_t *loop;
 	uv_poll_t poll_handle;
@@ -112,10 +114,11 @@ draw_frame(struct client_state *state)
 	wl_shm_pool_destroy(pool);
 	close(fd);
 
+	int offset = (int)state->offset % 8;
 	/* Draw checkerboxed background */
 	for (int y = 0; y < state->height; ++y) {
 		for (int x = 0; x < state->width; ++x) {
-			if ((x + y / 8 * 8) % 16 < 8)
+			if (((x + offset) + (y + offset) / 8 * 8) % 16 < 8)
 				data[y * state->width + x] = 0xFF666666;
 			else
 				data[y * state->width + x] = 0xFFEEEEEE;
@@ -135,7 +138,7 @@ xdg_surface_configure(
 	xdg_surface_ack_configure(xdg_surface, serial);
 	wl_surface_commit(state->wl_surface);
 
-	struct wl_buffer *buffer = draw_frame(state);
+	struct wl_buffer *buffer = state->unmapped ? NULL : draw_frame(state);
 	wl_surface_attach(state->wl_surface, buffer, 0, 0);
 	wl_surface_commit(state->wl_surface);
 }
@@ -154,18 +157,38 @@ static const struct xdg_wm_base_listener xdg_wm_base_listener = {
 	.ping = xdg_wm_base_ping,
 };
 
+static const struct wl_callback_listener wl_surface_frame_listener;
+
 static void
 draw(struct client_state *state)
 {
 	struct timespec ts = {0};
 	clock_gettime(CLOCK_MONOTONIC, &ts);
-	uint32_t time = ts.tv_nsec / 1000000 + ts.tv_sec * 1000;
+	double_t seconds = ts.tv_nsec / 1000000000.0 + ts.tv_sec;
 
-	struct wl_buffer *buffer = draw_frame(state);
+	state->offset += seconds / 10000.0;
+	struct wl_buffer *buffer = state->unmapped ? NULL : draw_frame(state);
 	wl_surface_attach(state->wl_surface, buffer, 0, 0);
 	wl_surface_damage_buffer(state->wl_surface, 0, 0, INT32_MAX, INT32_MAX);
 	wl_surface_commit(state->wl_surface);
 }
+
+static void
+wl_surface_frame_done(void *data, struct wl_callback *cb, uint32_t time)
+{
+	/* Destroy this callback */
+	wl_callback_destroy(cb);
+
+	/* Request another frame */
+	struct client_state *state = data;
+	cb = wl_surface_frame(state->wl_surface);
+	wl_callback_add_listener(cb, &wl_surface_frame_listener, state);
+	draw(state);
+}
+
+static const struct wl_callback_listener wl_surface_frame_listener = {
+	.done = wl_surface_frame_done,
+};
 
 static void
 registry_global(void *data, struct wl_registry *wl_registry, uint32_t name,
@@ -271,6 +294,9 @@ main(int argc, char *argv[])
 		state.xdg_toplevel, &xdg_toplevel_listener, &state);
 	xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
 	wl_surface_commit(state.wl_surface);
+
+	struct wl_callback *cb = wl_surface_frame(state.wl_surface);
+	wl_callback_add_listener(cb, &wl_surface_frame_listener, &state);
 	wl_display_flush(state.wl_display);
 
 	state.loop = uv_default_loop();
