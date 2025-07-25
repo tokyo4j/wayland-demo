@@ -270,6 +270,7 @@ main(int argc, char *argv[])
 	xdg_toplevel_add_listener(
 		state.xdg_toplevel, &xdg_toplevel_listener, &state);
 	xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
+        xdg_toplevel_set_minimized(state.xdg_toplevel);
 	wl_surface_commit(state.wl_surface);
 	wl_display_flush(state.wl_display);
 
