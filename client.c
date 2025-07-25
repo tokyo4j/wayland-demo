@@ -70,6 +70,9 @@ struct client_state {
 	struct wl_surface *wl_surface;
 	struct xdg_surface *xdg_surface;
 	struct xdg_toplevel *xdg_toplevel;
+	struct wl_surface *popup_wl_surface;
+	struct xdg_surface *popup_xdg_surface;
+	struct xdg_popup *xdg_popup;
 
 	int width, height;
 
@@ -271,6 +274,23 @@ main(int argc, char *argv[])
 		state.xdg_toplevel, &xdg_toplevel_listener, &state);
 	xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
 	wl_surface_commit(state.wl_surface);
+	state.popup_wl_surface =
+		wl_compositor_create_surface(state.wl_compositor);
+	state.popup_xdg_surface = xdg_wm_base_get_xdg_surface(
+		state.xdg_wm_base, state.popup_wl_surface);
+	struct xdg_positioner *positioner =
+		xdg_wm_base_create_positioner(state.xdg_wm_base);
+	xdg_positioner_set_size(positioner, 100, 50);
+	xdg_positioner_set_anchor_rect(positioner, 10, 10, 1, 1);
+	xdg_positioner_set_anchor(positioner, XDG_POSITIONER_ANCHOR_TOP_LEFT);
+	xdg_positioner_set_gravity(
+		positioner, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
+	xdg_positioner_set_constraint_adjustment(positioner,
+		XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X
+			| XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y);
+	state.xdg_popup = xdg_surface_get_popup(
+		state.popup_xdg_surface, state.xdg_surface, positioner);
+	wl_surface_commit(state.popup_wl_surface);
 	wl_display_flush(state.wl_display);
 
 	state.loop = uv_default_loop();
