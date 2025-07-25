@@ -72,9 +72,11 @@ struct client_state {
 	struct xdg_toplevel *xdg_toplevel;
 
 	int width, height;
+	bool unmapped;
 
 	uv_loop_t *loop;
 	uv_poll_t poll_handle;
+	uv_timer_t timer_handle;
 };
 
 static void
@@ -135,7 +137,7 @@ xdg_surface_configure(
 	xdg_surface_ack_configure(xdg_surface, serial);
 	wl_surface_commit(state->wl_surface);
 
-	struct wl_buffer *buffer = draw_frame(state);
+	struct wl_buffer *buffer = state->unmapped ? NULL : draw_frame(state);
 	wl_surface_attach(state->wl_surface, buffer, 0, 0);
 	wl_surface_commit(state->wl_surface);
 }
@@ -161,7 +163,7 @@ draw(struct client_state *state)
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	uint32_t time = ts.tv_nsec / 1000000 + ts.tv_sec * 1000;
 
-	struct wl_buffer *buffer = draw_frame(state);
+	struct wl_buffer *buffer = state->unmapped ? NULL : draw_frame(state);
 	wl_surface_attach(state->wl_surface, buffer, 0, 0);
 	wl_surface_damage_buffer(state->wl_surface, 0, 0, INT32_MAX, INT32_MAX);
 	wl_surface_commit(state->wl_surface);
@@ -209,6 +211,17 @@ on_wayland_event(uv_poll_t *handle, int status, int events)
 		if (wl_display_dispatch(state->wl_display) == -1)
 			fprintf(stderr, "Failed to dispatch Wayland events.\n");
 	}
+	wl_display_flush(state->wl_display);
+}
+
+static void
+on_timer(uv_timer_t *handle)
+{
+	struct client_state *state = handle->data;
+	state->unmapped = !state->unmapped;
+	// unmap or send initial commit
+	wl_surface_attach(state->wl_surface, NULL, 0, 0);
+	wl_surface_commit(state->wl_surface);
 	wl_display_flush(state->wl_display);
 }
 
@@ -278,6 +291,10 @@ main(int argc, char *argv[])
 	uv_poll_init(state.loop, &state.poll_handle,
 		wl_display_get_fd(state.wl_display));
 	uv_poll_start(&state.poll_handle, UV_READABLE, on_wayland_event);
+
+	state.timer_handle.data = &state;
+	uv_timer_init(state.loop, &state.timer_handle);
+	uv_timer_start(&state.timer_handle, on_timer, 1000, 1000);
 
 	uv_run(state.loop, UV_RUN_DEFAULT);
 
