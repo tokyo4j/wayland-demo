@@ -229,8 +229,8 @@ xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 		state->width = width;
 		state->height = height;
 	} else if (state->width == 0 || state->height == 0) {
-		state->width = 600;
-		state->height = 600;
+		state->width = 1;
+		state->height = 1;
 	}
 }
 
