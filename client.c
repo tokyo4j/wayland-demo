@@ -237,6 +237,8 @@ xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 		state->width = 600;
 		state->height = 600;
 	}
+	state->width -= state->width % 17;
+	state->width -= state->width % 17;
 }
 
 static void
