@@ -185,7 +185,7 @@ registry_global(void *data, struct wl_registry *wl_registry, uint32_t name,
 			state->xdg_wm_base, &xdg_wm_base_listener, state);
 	} else if (!strcmp(interface, wl_seat_interface.name)) {
 		state->wl_seat = wl_registry_bind(
-			wl_registry, name, &wl_seat_interface, 8);
+			wl_registry, name, &wl_seat_interface, 7);
 	}
 }
 
@@ -218,8 +218,8 @@ xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 {
 	struct client_state *state = data;
 	if (width > 0 || height > 0) {
-		state->width = width;
-		state->height = height;
+		state->width = 600;
+		state->height = 600;
 	} else if (state->width == 0 || state->height == 0) {
 		state->width = 600;
 		state->height = 600;
@@ -270,6 +270,7 @@ main(int argc, char *argv[])
 	xdg_toplevel_add_listener(
 		state.xdg_toplevel, &xdg_toplevel_listener, &state);
 	xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
+	xdg_toplevel_set_fullscreen(state.xdg_toplevel, NULL);
 	wl_surface_commit(state.wl_surface);
 	wl_display_flush(state.wl_display);
 
