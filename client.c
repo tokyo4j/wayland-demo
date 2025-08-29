@@ -133,7 +133,6 @@ xdg_surface_configure(
 {
 	struct client_state *state = data;
 	xdg_surface_ack_configure(xdg_surface, serial);
-	wl_surface_commit(state->wl_surface);
 
 	struct wl_buffer *buffer = draw_frame(state);
 	wl_surface_attach(state->wl_surface, buffer, 0, 0);
