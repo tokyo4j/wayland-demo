@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <time.h>
@@ -205,8 +206,10 @@ on_wayland_event(uv_poll_t *handle, int status, int events)
 {
 	struct client_state *state = handle->data;
 	if (events & UV_READABLE) {
-		if (wl_display_dispatch(state->wl_display) == -1)
+		if (wl_display_dispatch(state->wl_display) == -1) {
 			fprintf(stderr, "Failed to dispatch Wayland events.\n");
+			exit(1);
+		}
 	}
 	wl_display_flush(state->wl_display);
 }
