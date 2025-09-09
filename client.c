@@ -350,6 +350,9 @@ main(int argc, char *argv[])
 		state.zwlr_layer_surface_v1, state.defaults.height);
 	zwlr_layer_surface_v1_set_size(
 		state.zwlr_layer_surface_v1, 0, state.defaults.height);
+	zwlr_layer_surface_v1_set_keyboard_interactivity(
+		state.zwlr_layer_surface_v1,
+		ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND);
 
 	state.popup.wl_surface =
 		wl_compositor_create_surface(state.wl_compositor);
