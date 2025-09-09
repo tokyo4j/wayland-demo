@@ -3,7 +3,7 @@ PROTO_DIR=/usr/share/wayland-protocols
 client: client.c \
 				xdg-shell-protocol.c \
 				xdg-shell-protocol.h
-	gcc -g -lwayland-client -luv -o $@ \
+	gcc -g -Wall -lwayland-client -luv -o $@ \
 		client.c \
 		xdg-shell-protocol.c
 

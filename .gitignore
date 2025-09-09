@@ -1,3 +1,4 @@
 .vscode
 *-protocol.*
 client
+compile_commands.json

@@ -155,19 +155,6 @@ static const struct xdg_wm_base_listener xdg_wm_base_listener = {
 };
 
 static void
-draw(struct client_state *state)
-{
-	struct timespec ts = {0};
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	uint32_t time = ts.tv_nsec / 1000000 + ts.tv_sec * 1000;
-
-	struct wl_buffer *buffer = draw_frame(state);
-	wl_surface_attach(state->wl_surface, buffer, 0, 0);
-	wl_surface_damage_buffer(state->wl_surface, 0, 0, INT32_MAX, INT32_MAX);
-	wl_surface_commit(state->wl_surface);
-}
-
-static void
 registry_global(void *data, struct wl_registry *wl_registry, uint32_t name,
 	const char *interface, uint32_t version)
 {
