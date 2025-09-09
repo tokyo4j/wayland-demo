@@ -81,6 +81,10 @@ struct client_state {
 		struct xdg_popup *xdg_popup;
 		struct xdg_positioner *xdg_positioner;
 		int width, height;
+		struct {
+			struct wl_surface *wl_surface;
+			struct wl_subsurface *wl_subsurface;
+		} subsurface;
 	} popup;
 
 	int width, height;
@@ -96,6 +100,11 @@ struct client_state {
 		int popup_anchor_width;
 		int popup_width;
 		int popup_height;
+		int popup_subsurface_x;
+		int popup_subsurface_y;
+		int popup_subsurface_width;
+		int popup_subsurface_height;
+		uint32_t popup_subsurface_colors[2];
 	} defaults;
 };
 
@@ -253,6 +262,17 @@ handle_popup_xdg_surface_configure(
 	struct wl_buffer *buffer = draw_frame(state->wl_shm, state->popup.width,
 		state->popup.height, state->defaults.popup_colors);
 	wl_surface_attach(state->popup.wl_surface, buffer, 0, 0);
+
+	struct wl_buffer *sub_buffer = draw_frame(state->wl_shm,
+		state->defaults.popup_subsurface_width,
+		state->defaults.popup_subsurface_height,
+		state->defaults.popup_subsurface_colors);
+	wl_surface_attach(state->popup.subsurface.wl_surface, sub_buffer, 0, 0);
+	wl_subsurface_set_position(state->popup.subsurface.wl_subsurface,
+		state->defaults.popup_subsurface_x,
+		state->defaults.popup_subsurface_y);
+	wl_surface_commit(state->popup.subsurface.wl_surface);
+
 	wl_surface_commit(state->popup.wl_surface);
 }
 
@@ -299,6 +319,12 @@ main(int argc, char *argv[])
 				.popup_width = 100,
 				.popup_height = 50,
 				.popup_anchor_width = 50,
+				.popup_subsurface_x = 10,
+				.popup_subsurface_y = 10,
+				.popup_subsurface_width = 20,
+				.popup_subsurface_height = 20,
+				.popup_subsurface_colors = {0xff66ff66,
+					0xffeeeeee},
 			},
 	};
 	state.wl_display = wl_display_connect(NULL);
@@ -348,6 +374,12 @@ main(int argc, char *argv[])
 		state.popup.xdg_popup, &popup_xdg_popup_listener, &state);
 	zwlr_layer_surface_v1_get_popup(
 		state.zwlr_layer_surface_v1, state.popup.xdg_popup);
+
+	state.popup.subsurface.wl_surface =
+		wl_compositor_create_surface(state.wl_compositor);
+	state.popup.subsurface.wl_subsurface = wl_subcompositor_get_subsurface(
+		state.wl_subcompositor, state.popup.subsurface.wl_surface,
+		state.popup.wl_surface);
 
 	wl_surface_commit(state.wl_surface);
 	wl_surface_commit(state.popup.wl_surface);
