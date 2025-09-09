@@ -79,14 +79,14 @@ struct client_state {
 };
 
 static void
-wl_buffer_release(void *data, struct wl_buffer *wl_buffer)
+handle_wl_buffer_release(void *data, struct wl_buffer *wl_buffer)
 {
 	/* Sent by the compositor when it's no longer using this buffer */
 	wl_buffer_destroy(wl_buffer);
 }
 
 static const struct wl_buffer_listener wl_buffer_listener = {
-	.release = wl_buffer_release,
+	.release = handle_wl_buffer_release,
 };
 
 static struct wl_buffer *
@@ -129,7 +129,7 @@ draw_frame(struct client_state *state)
 }
 
 static void
-xdg_surface_configure(
+handle_xdg_surface_configure(
 	void *data, struct xdg_surface *xdg_surface, uint32_t serial)
 {
 	struct client_state *state = data;
@@ -141,22 +141,23 @@ xdg_surface_configure(
 }
 
 static const struct xdg_surface_listener xdg_surface_listener = {
-	.configure = xdg_surface_configure,
+	.configure = handle_xdg_surface_configure,
 };
 
 static void
-xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial)
+handle_xdg_wm_base_ping(
+	void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial)
 {
 	xdg_wm_base_pong(xdg_wm_base, serial);
 }
 
 static const struct xdg_wm_base_listener xdg_wm_base_listener = {
-	.ping = xdg_wm_base_ping,
+	.ping = handle_xdg_wm_base_ping,
 };
 
 static void
-registry_global(void *data, struct wl_registry *wl_registry, uint32_t name,
-	const char *interface, uint32_t version)
+handle_registry_global(void *data, struct wl_registry *wl_registry,
+	uint32_t name, const char *interface, uint32_t version)
 {
 	struct client_state *state = data;
 	if (!strcmp(interface, wl_shm_interface.name)) {
@@ -177,15 +178,15 @@ registry_global(void *data, struct wl_registry *wl_registry, uint32_t name,
 }
 
 static void
-registry_global_remove(
+handle_registry_global_remove(
 	void *data, struct wl_registry *wl_registry, uint32_t name)
 {
 	/* This space deliberately left blank */
 }
 
 static const struct wl_registry_listener wl_registry_listener = {
-	.global = registry_global,
-	.global_remove = registry_global_remove,
+	.global = handle_registry_global,
+	.global_remove = handle_registry_global_remove,
 };
 
 static void
@@ -202,7 +203,7 @@ on_wayland_event(uv_poll_t *handle, int status, int events)
 }
 
 static void
-xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
+handle_xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 	int32_t width, int32_t height, struct wl_array *states)
 {
 	struct client_state *state = data;
@@ -216,28 +217,28 @@ xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 }
 
 static void
-xdg_toplevel_close(void *data, struct xdg_toplevel *xdg_toplevel)
+handle_xdg_toplevel_close(void *data, struct xdg_toplevel *xdg_toplevel)
 {
 	_exit(0);
 }
 
 static void
-xdg_toplevel_configure_bounds(void *data, struct xdg_toplevel *xdg_toplevel,
-	int32_t width, int32_t height)
+handle_xdg_toplevel_configure_bounds(void *data,
+	struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height)
 {
 }
 
 static void
-xdg_toplevel_wm_capabilities(void *data, struct xdg_toplevel *xdg_toplevel,
-	struct wl_array *capabilities)
+handle_xdg_toplevel_wm_capabilities(void *data,
+	struct xdg_toplevel *xdg_toplevel, struct wl_array *capabilities)
 {
 }
 
 static const struct xdg_toplevel_listener xdg_toplevel_listener = {
-	.configure = xdg_toplevel_configure,
-	.close = xdg_toplevel_close,
-	.configure_bounds = xdg_toplevel_configure_bounds,
-	.wm_capabilities = xdg_toplevel_wm_capabilities,
+	.configure = handle_xdg_toplevel_configure,
+	.close = handle_xdg_toplevel_close,
+	.configure_bounds = handle_xdg_toplevel_configure_bounds,
+	.wm_capabilities = handle_xdg_toplevel_wm_capabilities,
 };
 
 int
