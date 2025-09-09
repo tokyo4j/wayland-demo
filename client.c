@@ -67,10 +67,13 @@ struct client_state {
 	struct wl_compositor *wl_compositor;
 	struct xdg_wm_base *xdg_wm_base;
 	struct wl_seat *wl_seat;
+	struct wl_subcompositor *wl_subcompositor;
 	/* Objects */
 	struct wl_surface *wl_surface;
 	struct xdg_surface *xdg_surface;
 	struct xdg_toplevel *xdg_toplevel;
+	struct wl_pointer *wl_pointer;
+	struct wl_keyboard *wl_keyboard;
 
 	int width, height;
 
@@ -172,6 +175,9 @@ handle_registry_global(void *data, struct wl_registry *wl_registry,
 	} else if (!strcmp(interface, wl_compositor_interface.name)) {
 		state->wl_compositor = wl_registry_bind(
 			wl_registry, name, &wl_compositor_interface, 4);
+	} else if (!strcmp(interface, wl_subcompositor_interface.name)) {
+		state->wl_subcompositor = wl_registry_bind(
+			wl_registry, name, &wl_subcompositor_interface, 1);
 	} else if (!strcmp(interface, xdg_wm_base_interface.name)) {
 		state->xdg_wm_base = wl_registry_bind(
 			wl_registry, name, &xdg_wm_base_interface, 1);
@@ -263,6 +269,9 @@ main(int argc, char *argv[])
 	wl_registry_add_listener(
 		state.wl_registry, &wl_registry_listener, &state);
 	wl_display_roundtrip(state.wl_display);
+
+	state.wl_pointer = wl_seat_get_pointer(state.wl_seat);
+	state.wl_keyboard = wl_seat_get_keyboard(state.wl_seat);
 
 	state.wl_surface = wl_compositor_create_surface(state.wl_compositor);
 	state.xdg_surface = xdg_wm_base_get_xdg_surface(
