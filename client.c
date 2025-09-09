@@ -75,6 +75,13 @@ struct client_state {
 	struct wl_pointer *wl_pointer;
 	struct wl_keyboard *wl_keyboard;
 	struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1;
+	struct {
+		struct wl_surface *wl_surface;
+		struct xdg_surface *xdg_surface;
+		struct xdg_popup *xdg_popup;
+		struct xdg_positioner *xdg_positioner;
+		int width, height;
+	} popup;
 
 	int width, height;
 
@@ -84,6 +91,11 @@ struct client_state {
 	struct {
 		int height;
 		uint32_t colors[2];
+		uint32_t popup_colors[2];
+		int popup_x;
+		int popup_anchor_width;
+		int popup_width;
+		int popup_height;
 	} defaults;
 };
 
@@ -231,6 +243,49 @@ static const struct zwlr_layer_surface_v1_listener
 		.closed = handle_zwlr_layer_surface_v1_closed,
 };
 
+static void
+handle_popup_xdg_surface_configure(
+	void *data, struct xdg_surface *xdg_surface, uint32_t serial)
+{
+	struct client_state *state = data;
+	xdg_surface_ack_configure(xdg_surface, serial);
+
+	struct wl_buffer *buffer = draw_frame(state->wl_shm, state->popup.width,
+		state->popup.height, state->defaults.popup_colors);
+	wl_surface_attach(state->popup.wl_surface, buffer, 0, 0);
+	wl_surface_commit(state->popup.wl_surface);
+}
+
+static const struct xdg_surface_listener popup_xdg_surface_listener = {
+	.configure = handle_popup_xdg_surface_configure,
+};
+
+static void
+handle_popup_xdg_popup_configure(void *data, struct xdg_popup *xdg_popup,
+	int32_t x, int32_t y, int32_t width, int32_t height)
+{
+	struct client_state *state = data;
+	state->popup.width = width;
+	state->popup.height = height;
+}
+
+static void
+handle_popup_xdg_popup_popup_done(void *data, struct xdg_popup *xdg_popup)
+{
+}
+
+static void
+handle_popup_xdg_popup_repositioned(
+	void *data, struct xdg_popup *xdg_popup, uint32_t token)
+{
+}
+
+static const struct xdg_popup_listener popup_xdg_popup_listener = {
+	.configure = handle_popup_xdg_popup_configure,
+	.popup_done = handle_popup_xdg_popup_popup_done,
+	.repositioned = handle_popup_xdg_popup_repositioned,
+};
+
 int
 main(int argc, char *argv[])
 {
@@ -239,6 +294,11 @@ main(int argc, char *argv[])
 			{
 				.height = 100,
 				.colors = {0xff666666, 0xffeeeeee},
+				.popup_colors = {0xffff6666, 0xffeeeeee},
+				.popup_x = 200,
+				.popup_width = 100,
+				.popup_height = 50,
+				.popup_anchor_width = 50,
 			},
 	};
 	state.wl_display = wl_display_connect(NULL);
@@ -265,7 +325,32 @@ main(int argc, char *argv[])
 	zwlr_layer_surface_v1_set_size(
 		state.zwlr_layer_surface_v1, 0, state.defaults.height);
 
+	state.popup.wl_surface =
+		wl_compositor_create_surface(state.wl_compositor);
+	state.popup.xdg_surface = xdg_wm_base_get_xdg_surface(
+		state.xdg_wm_base, state.popup.wl_surface);
+	xdg_surface_add_listener(
+		state.popup.xdg_surface, &popup_xdg_surface_listener, &state);
+	state.popup.xdg_positioner =
+		xdg_wm_base_create_positioner(state.xdg_wm_base);
+	xdg_positioner_set_anchor_rect(state.popup.xdg_positioner,
+		state.defaults.popup_x, 0, state.defaults.popup_anchor_width,
+		state.defaults.height);
+	xdg_positioner_set_anchor(
+		state.popup.xdg_positioner, XDG_POSITIONER_ANCHOR_TOP_LEFT);
+	xdg_positioner_set_gravity(
+		state.popup.xdg_positioner, XDG_POSITIONER_GRAVITY_TOP_RIGHT);
+	xdg_positioner_set_size(state.popup.xdg_positioner,
+		state.defaults.popup_width, state.defaults.popup_height);
+	state.popup.xdg_popup = xdg_surface_get_popup(
+		state.popup.xdg_surface, NULL, state.popup.xdg_positioner);
+	xdg_popup_add_listener(
+		state.popup.xdg_popup, &popup_xdg_popup_listener, &state);
+	zwlr_layer_surface_v1_get_popup(
+		state.zwlr_layer_surface_v1, state.popup.xdg_popup);
+
 	wl_surface_commit(state.wl_surface);
+	wl_surface_commit(state.popup.wl_surface);
 	wl_display_flush(state.wl_display);
 
 	state.loop = uv_default_loop();
