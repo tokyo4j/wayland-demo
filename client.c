@@ -76,6 +76,11 @@ struct client_state {
 
 	uv_loop_t *loop;
 	uv_poll_t poll_handle;
+
+	struct {
+		int width, height;
+		uint32_t colors[2];
+	} defaults;
 };
 
 static void
@@ -90,10 +95,10 @@ static const struct wl_buffer_listener wl_buffer_listener = {
 };
 
 static struct wl_buffer *
-draw_frame(struct client_state *state)
+draw_frame(struct wl_shm *wl_shm, int w, int h, uint32_t colors[static 2])
 {
-	int stride = state->width * 4;
-	int size = stride * state->height;
+	int stride = w * 4;
+	int size = stride * h;
 
 	int fd = allocate_shm_file(size);
 	if (fd == -1) {
@@ -107,19 +112,19 @@ draw_frame(struct client_state *state)
 		return NULL;
 	}
 
-	struct wl_shm_pool *pool = wl_shm_create_pool(state->wl_shm, fd, size);
-	struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0,
-		state->width, state->height, stride, WL_SHM_FORMAT_XRGB8888);
+	struct wl_shm_pool *pool = wl_shm_create_pool(wl_shm, fd, size);
+	struct wl_buffer *buffer = wl_shm_pool_create_buffer(
+		pool, 0, w, h, stride, WL_SHM_FORMAT_XRGB8888);
 	wl_shm_pool_destroy(pool);
 	close(fd);
 
 	/* Draw checkerboxed background */
-	for (int y = 0; y < state->height; ++y) {
-		for (int x = 0; x < state->width; ++x) {
+	for (int y = 0; y < h; ++y) {
+		for (int x = 0; x < w; ++x) {
 			if ((x + y / 8 * 8) % 16 < 8)
-				data[y * state->width + x] = 0xFF666666;
+				data[y * w + x] = colors[0];
 			else
-				data[y * state->width + x] = 0xFFEEEEEE;
+				data[y * w + x] = colors[1];
 		}
 	}
 
@@ -135,7 +140,8 @@ handle_xdg_surface_configure(
 	struct client_state *state = data;
 	xdg_surface_ack_configure(xdg_surface, serial);
 
-	struct wl_buffer *buffer = draw_frame(state);
+	struct wl_buffer *buffer = draw_frame(state->wl_shm, state->width,
+		state->height, state->defaults.colors);
 	wl_surface_attach(state->wl_surface, buffer, 0, 0);
 	wl_surface_commit(state->wl_surface);
 }
@@ -211,8 +217,8 @@ handle_xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 		state->width = width;
 		state->height = height;
 	} else if (state->width == 0 || state->height == 0) {
-		state->width = 600;
-		state->height = 600;
+		state->width = state->defaults.width;
+		state->height = state->defaults.height;
 	}
 }
 
@@ -244,7 +250,14 @@ static const struct xdg_toplevel_listener xdg_toplevel_listener = {
 int
 main(int argc, char *argv[])
 {
-	struct client_state state = {0};
+	struct client_state state = {
+		.defaults =
+			{
+				.width = 600,
+				.height = 600,
+				.colors = {0xff666666, 0xffeeeeee},
+			},
+	};
 	state.wl_display = wl_display_connect(NULL);
 	state.wl_registry = wl_display_get_registry(state.wl_display);
 	wl_registry_add_listener(
