@@ -1,3 +1,4 @@
+#include "wlr-layer-shell-unstable-v1-protocol.h"
 #include "xdg-shell-protocol.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -68,12 +69,12 @@ struct client_state {
 	struct xdg_wm_base *xdg_wm_base;
 	struct wl_seat *wl_seat;
 	struct wl_subcompositor *wl_subcompositor;
+	struct zwlr_layer_shell_v1 *zwlr_layer_shell_v1;
 	/* Objects */
 	struct wl_surface *wl_surface;
-	struct xdg_surface *xdg_surface;
-	struct xdg_toplevel *xdg_toplevel;
 	struct wl_pointer *wl_pointer;
 	struct wl_keyboard *wl_keyboard;
+	struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1;
 
 	int width, height;
 
@@ -81,7 +82,7 @@ struct client_state {
 	uv_poll_t poll_handle;
 
 	struct {
-		int width, height;
+		int height;
 		uint32_t colors[2];
 	} defaults;
 };
@@ -137,23 +138,6 @@ draw_frame(struct wl_shm *wl_shm, int w, int h, uint32_t colors[static 2])
 }
 
 static void
-handle_xdg_surface_configure(
-	void *data, struct xdg_surface *xdg_surface, uint32_t serial)
-{
-	struct client_state *state = data;
-	xdg_surface_ack_configure(xdg_surface, serial);
-
-	struct wl_buffer *buffer = draw_frame(state->wl_shm, state->width,
-		state->height, state->defaults.colors);
-	wl_surface_attach(state->wl_surface, buffer, 0, 0);
-	wl_surface_commit(state->wl_surface);
-}
-
-static const struct xdg_surface_listener xdg_surface_listener = {
-	.configure = handle_xdg_surface_configure,
-};
-
-static void
 handle_xdg_wm_base_ping(
 	void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial)
 {
@@ -186,6 +170,9 @@ handle_registry_global(void *data, struct wl_registry *wl_registry,
 	} else if (!strcmp(interface, wl_seat_interface.name)) {
 		state->wl_seat = wl_registry_bind(
 			wl_registry, name, &wl_seat_interface, 8);
+	} else if (!strcmp(interface, zwlr_layer_shell_v1_interface.name)) {
+		state->zwlr_layer_shell_v1 = wl_registry_bind(
+			wl_registry, name, &zwlr_layer_shell_v1_interface, 4);
 	}
 }
 
@@ -215,42 +202,33 @@ on_wayland_event(uv_poll_t *handle, int status, int events)
 }
 
 static void
-handle_xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
-	int32_t width, int32_t height, struct wl_array *states)
+handle_zwlr_layer_surface_v1_configure(void *data,
+	struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1, uint32_t serial,
+	uint32_t width, uint32_t height)
 {
 	struct client_state *state = data;
-	if (width > 0 || height > 0) {
-		state->width = width;
-		state->height = height;
-	} else if (state->width == 0 || state->height == 0) {
-		state->width = state->defaults.width;
-		state->height = state->defaults.height;
-	}
+	state->width = width;
+	state->height = height;
+
+	zwlr_layer_surface_v1_ack_configure(
+		state->zwlr_layer_surface_v1, serial);
+
+	struct wl_buffer *buffer = draw_frame(state->wl_shm, state->width,
+		state->height, state->defaults.colors);
+	wl_surface_attach(state->wl_surface, buffer, 0, 0);
+	wl_surface_commit(state->wl_surface);
 }
 
 static void
-handle_xdg_toplevel_close(void *data, struct xdg_toplevel *xdg_toplevel)
-{
-	_exit(0);
-}
-
-static void
-handle_xdg_toplevel_configure_bounds(void *data,
-	struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height)
+handle_zwlr_layer_surface_v1_closed(
+	void *data, struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1)
 {
 }
 
-static void
-handle_xdg_toplevel_wm_capabilities(void *data,
-	struct xdg_toplevel *xdg_toplevel, struct wl_array *capabilities)
-{
-}
-
-static const struct xdg_toplevel_listener xdg_toplevel_listener = {
-	.configure = handle_xdg_toplevel_configure,
-	.close = handle_xdg_toplevel_close,
-	.configure_bounds = handle_xdg_toplevel_configure_bounds,
-	.wm_capabilities = handle_xdg_toplevel_wm_capabilities,
+static const struct zwlr_layer_surface_v1_listener
+	zwlr_layer_surface_v1_listener = {
+		.configure = handle_zwlr_layer_surface_v1_configure,
+		.closed = handle_zwlr_layer_surface_v1_closed,
 };
 
 int
@@ -259,8 +237,7 @@ main(int argc, char *argv[])
 	struct client_state state = {
 		.defaults =
 			{
-				.width = 600,
-				.height = 600,
+				.height = 100,
 				.colors = {0xff666666, 0xffeeeeee},
 			},
 	};
@@ -274,14 +251,20 @@ main(int argc, char *argv[])
 	state.wl_keyboard = wl_seat_get_keyboard(state.wl_seat);
 
 	state.wl_surface = wl_compositor_create_surface(state.wl_compositor);
-	state.xdg_surface = xdg_wm_base_get_xdg_surface(
-		state.xdg_wm_base, state.wl_surface);
-	xdg_surface_add_listener(
-		state.xdg_surface, &xdg_surface_listener, &state);
-	state.xdg_toplevel = xdg_surface_get_toplevel(state.xdg_surface);
-	xdg_toplevel_add_listener(
-		state.xdg_toplevel, &xdg_toplevel_listener, &state);
-	xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
+	state.zwlr_layer_surface_v1 = zwlr_layer_shell_v1_get_layer_surface(
+		state.zwlr_layer_shell_v1, state.wl_surface, NULL,
+		ZWLR_LAYER_SHELL_V1_LAYER_TOP, "wayland-demo");
+	zwlr_layer_surface_v1_add_listener(state.zwlr_layer_surface_v1,
+		&zwlr_layer_surface_v1_listener, &state);
+	zwlr_layer_surface_v1_set_anchor(state.zwlr_layer_surface_v1,
+		ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM
+			| ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT
+			| ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT);
+	zwlr_layer_surface_v1_set_exclusive_zone(
+		state.zwlr_layer_surface_v1, state.defaults.height);
+	zwlr_layer_surface_v1_set_size(
+		state.zwlr_layer_surface_v1, 0, state.defaults.height);
+
 	wl_surface_commit(state.wl_surface);
 	wl_display_flush(state.wl_display);
 
