@@ -74,6 +74,10 @@ struct client_state {
 	struct xdg_toplevel *xdg_toplevel;
 	struct wl_pointer *wl_pointer;
 	struct wl_keyboard *wl_keyboard;
+	struct {
+		struct wl_surface *wl_surface;
+		struct wl_subsurface *wl_subsurface;
+	} subsurface;
 
 	int width, height;
 
@@ -83,6 +87,11 @@ struct client_state {
 	struct {
 		int width, height;
 		uint32_t colors[2];
+		int subsurface_x;
+		int subsurface_y;
+		int subsurface_width;
+		int subsurface_height;
+		uint32_t subsurface_colors[2];
 	} defaults;
 };
 
@@ -146,6 +155,16 @@ handle_xdg_surface_configure(
 	struct wl_buffer *buffer = draw_frame(state->wl_shm, state->width,
 		state->height, state->defaults.colors);
 	wl_surface_attach(state->wl_surface, buffer, 0, 0);
+
+	struct wl_buffer *sub_buffer =
+		draw_frame(state->wl_shm, state->defaults.subsurface_width,
+			state->defaults.subsurface_height,
+			state->defaults.subsurface_colors);
+	wl_surface_attach(state->subsurface.wl_surface, sub_buffer, 0, 0);
+	wl_subsurface_set_position(state->subsurface.wl_subsurface,
+		state->defaults.subsurface_x, state->defaults.subsurface_y);
+	wl_surface_commit(state->subsurface.wl_surface);
+
 	wl_surface_commit(state->wl_surface);
 }
 
@@ -262,6 +281,11 @@ main(int argc, char *argv[])
 				.width = 600,
 				.height = 600,
 				.colors = {0xff666666, 0xffeeeeee},
+				.subsurface_x = 50,
+				.subsurface_y = 50,
+				.subsurface_width = 100,
+				.subsurface_height = 100,
+				.subsurface_colors = {0xff66ff66, 0xffeeeeee},
 			},
 	};
 	state.wl_display = wl_display_connect(NULL);
@@ -282,6 +306,13 @@ main(int argc, char *argv[])
 	xdg_toplevel_add_listener(
 		state.xdg_toplevel, &xdg_toplevel_listener, &state);
 	xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
+
+	state.subsurface.wl_surface =
+		wl_compositor_create_surface(state.wl_compositor);
+	state.subsurface.wl_subsurface =
+		wl_subcompositor_get_subsurface(state.wl_subcompositor,
+			state.subsurface.wl_surface, state.wl_surface);
+
 	wl_surface_commit(state.wl_surface);
 	wl_display_flush(state.wl_display);
 
