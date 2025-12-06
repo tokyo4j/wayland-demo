@@ -1,3 +1,4 @@
+#include "relative-pointer-unstable-v1-protocol.h"
 #include "xdg-shell-protocol.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -68,12 +69,14 @@ struct client_state {
 	struct xdg_wm_base *xdg_wm_base;
 	struct wl_seat *wl_seat;
 	struct wl_subcompositor *wl_subcompositor;
+	struct zwp_relative_pointer_manager_v1 *zwp_relative_pointer_manager_v1;
 	/* Objects */
 	struct wl_surface *wl_surface;
 	struct xdg_surface *xdg_surface;
 	struct xdg_toplevel *xdg_toplevel;
 	struct wl_pointer *wl_pointer;
 	struct wl_keyboard *wl_keyboard;
+	struct zwp_relative_pointer_v1 *zwp_relative_pointer;
 
 	int width, height;
 
@@ -186,6 +189,11 @@ handle_registry_global(void *data, struct wl_registry *wl_registry,
 	} else if (!strcmp(interface, wl_seat_interface.name)) {
 		state->wl_seat = wl_registry_bind(
 			wl_registry, name, &wl_seat_interface, 8);
+	} else if (!strcmp(interface,
+			   zwp_relative_pointer_manager_v1_interface.name)) {
+		state->zwp_relative_pointer_manager_v1 =
+			wl_registry_bind(wl_registry, name,
+				&zwp_relative_pointer_manager_v1_interface, 1);
 	}
 }
 
@@ -272,6 +280,11 @@ main(int argc, char *argv[])
 
 	state.wl_pointer = wl_seat_get_pointer(state.wl_seat);
 	state.wl_keyboard = wl_seat_get_keyboard(state.wl_seat);
+
+	state.zwp_relative_pointer =
+		zwp_relative_pointer_manager_v1_get_relative_pointer(
+			state.zwp_relative_pointer_manager_v1,
+			state.wl_pointer);
 
 	state.wl_surface = wl_compositor_create_surface(state.wl_compositor);
 	state.xdg_surface = xdg_wm_base_get_xdg_surface(
