@@ -1,3 +1,4 @@
+#include "pointer-constraints-unstable-v1-protocol.h"
 #include "relative-pointer-unstable-v1-protocol.h"
 #include "xdg-shell-protocol.h"
 #include <errno.h>
@@ -70,6 +71,7 @@ struct client_state {
 	struct wl_seat *wl_seat;
 	struct wl_subcompositor *wl_subcompositor;
 	struct zwp_relative_pointer_manager_v1 *zwp_relative_pointer_manager_v1;
+	struct zwp_pointer_constraints_v1 *zwp_pointer_constraints_v1;
 	/* Objects */
 	struct wl_surface *wl_surface;
 	struct xdg_surface *xdg_surface;
@@ -77,6 +79,7 @@ struct client_state {
 	struct wl_pointer *wl_pointer;
 	struct wl_keyboard *wl_keyboard;
 	struct zwp_relative_pointer_v1 *zwp_relative_pointer;
+	struct zwp_locked_pointer_v1 *zwp_locked_pointer_v1;
 
 	int width, height;
 
@@ -194,6 +197,11 @@ handle_registry_global(void *data, struct wl_registry *wl_registry,
 		state->zwp_relative_pointer_manager_v1 =
 			wl_registry_bind(wl_registry, name,
 				&zwp_relative_pointer_manager_v1_interface, 1);
+	} else if (!strcmp(interface,
+			   zwp_pointer_constraints_v1_interface.name)) {
+		state->zwp_pointer_constraints_v1 =
+			wl_registry_bind(wl_registry, name,
+				&zwp_pointer_constraints_v1_interface, 1);
 	}
 }
 
@@ -295,6 +303,12 @@ main(int argc, char *argv[])
 	xdg_toplevel_add_listener(
 		state.xdg_toplevel, &xdg_toplevel_listener, &state);
 	xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
+
+	state.zwp_locked_pointer_v1 = zwp_pointer_constraints_v1_lock_pointer(
+		state.zwp_pointer_constraints_v1, state.wl_surface,
+		state.wl_pointer, NULL,
+		ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
+
 	wl_surface_commit(state.wl_surface);
 	wl_display_flush(state.wl_display);
 
