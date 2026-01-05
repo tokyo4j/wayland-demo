@@ -1,167 +1,202 @@
+#include "ext-workspace-v1-protocol.h"
 #include "xdg-shell-protocol.h"
+#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <time.h>
 #include <unistd.h>
 #include <uv.h>
 #include <wayland-client-protocol.h>
 #include <wayland-client.h>
-
-/* Shared memory support code */
-static void
-randname(char *buf)
-{
-	struct timespec ts;
-	clock_gettime(CLOCK_REALTIME, &ts);
-	long r = ts.tv_nsec;
-	for (int i = 0; i < 6; ++i) {
-		buf[i] = 'A' + (r & 15) + (r & 16) * 2;
-		r >>= 5;
-	}
-}
-
-static int
-create_shm_file(void)
-{
-	int retries = 100;
-	do {
-		char name[] = "/wl_shm-XXXXXX";
-		randname(name + sizeof(name) - 7);
-		--retries;
-		int fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
-		if (fd >= 0) {
-			shm_unlink(name);
-			return fd;
-		}
-	} while (retries > 0 && errno == EEXIST);
-	return -1;
-}
-
-static int
-allocate_shm_file(size_t size)
-{
-	int fd = create_shm_file();
-	if (fd < 0)
-		return -1;
-	int ret;
-	do {
-		ret = ftruncate(fd, size);
-	} while (ret < 0 && errno == EINTR);
-	if (ret < 0) {
-		close(fd);
-		return -1;
-	}
-	return fd;
-}
 
 /* Wayland code */
 struct client_state {
 	/* Globals */
 	struct wl_display *wl_display;
 	struct wl_registry *wl_registry;
-	struct wl_shm *wl_shm;
-	struct wl_compositor *wl_compositor;
-	struct xdg_wm_base *xdg_wm_base;
 	struct wl_seat *wl_seat;
-	struct wl_subcompositor *wl_subcompositor;
-	/* Objects */
-	struct wl_surface *wl_surface;
-	struct xdg_surface *xdg_surface;
-	struct xdg_toplevel *xdg_toplevel;
-	struct wl_pointer *wl_pointer;
-	struct wl_keyboard *wl_keyboard;
-
-	int width, height;
+	struct ext_workspace_manager_v1 *workspace_manager;
+	struct ext_workspace_group_handle_v1 *workspace_group_handle;
 
 	uv_loop_t *loop;
 	uv_poll_t poll_handle;
+	uv_pipe_t stdin_pipe;
+	struct wl_list workspaces;
+};
 
-	struct {
-		int width, height;
-		uint32_t colors[2];
-	} defaults;
+struct workspace {
+	struct wl_list link;
+	struct ext_workspace_handle_v1 *handle;
+	struct client_state *client_state;
+	char *id;
+	char *name;
+	struct wl_array coordinates;
+	uint32_t state;
+	uint32_t caps;
 };
 
 static void
-handle_wl_buffer_release(void *data, struct wl_buffer *wl_buffer)
+workspace_handle_id(void *data,
+	struct ext_workspace_handle_v1 *ext_workspace_handle_v1, const char *id)
 {
-	/* Sent by the compositor when it's no longer using this buffer */
-	wl_buffer_destroy(wl_buffer);
-}
-
-static const struct wl_buffer_listener wl_buffer_listener = {
-	.release = handle_wl_buffer_release,
-};
-
-static struct wl_buffer *
-draw_frame(struct wl_shm *wl_shm, int w, int h, uint32_t colors[static 2])
-{
-	int stride = w * 4;
-	int size = stride * h;
-
-	int fd = allocate_shm_file(size);
-	if (fd == -1) {
-		return NULL;
+	struct workspace *ws = data;
+	free(ws->id);
+	ws->id = NULL;
+	if (id) {
+		ws->id = strdup(id);
 	}
-
-	uint32_t *data =
-		mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	if (data == MAP_FAILED) {
-		close(fd);
-		return NULL;
-	}
-
-	struct wl_shm_pool *pool = wl_shm_create_pool(wl_shm, fd, size);
-	struct wl_buffer *buffer = wl_shm_pool_create_buffer(
-		pool, 0, w, h, stride, WL_SHM_FORMAT_XRGB8888);
-	wl_shm_pool_destroy(pool);
-	close(fd);
-
-	/* Draw checkerboxed background */
-	for (int y = 0; y < h; ++y) {
-		for (int x = 0; x < w; ++x) {
-			if ((x + y / 8 * 8) % 16 < 8)
-				data[y * w + x] = colors[0];
-			else
-				data[y * w + x] = colors[1];
-		}
-	}
-
-	munmap(data, size);
-	wl_buffer_add_listener(buffer, &wl_buffer_listener, NULL);
-	return buffer;
 }
 
 static void
-handle_xdg_surface_configure(
-	void *data, struct xdg_surface *xdg_surface, uint32_t serial)
+workspace_handle_name(void *data,
+	struct ext_workspace_handle_v1 *ext_workspace_handle_v1,
+	const char *name)
+{
+	struct workspace *ws = data;
+	free(ws->name);
+	ws->name = NULL;
+	if (name) {
+		ws->name = strdup(name);
+	}
+}
+
+static void
+workspace_handle_coordinates(void *data,
+	struct ext_workspace_handle_v1 *ext_workspace_handle_v1,
+	struct wl_array *coordinates)
+{
+	struct workspace *ws = data;
+	wl_array_release(&ws->coordinates);
+	if (coordinates && coordinates->size > 0) {
+		wl_array_init(&ws->coordinates);
+		wl_array_copy(&ws->coordinates, coordinates);
+	}
+}
+
+static void
+workspace_handle_state(void *data,
+	struct ext_workspace_handle_v1 *ext_workspace_handle_v1, uint32_t state)
+{
+	struct workspace *ws = data;
+	ws->state = state;
+}
+
+static void
+workspace_handle_capabilities(void *data,
+	struct ext_workspace_handle_v1 *ext_workspace_handle_v1,
+	uint32_t capabilities)
+{
+	struct workspace *ws = data;
+	ws->caps = capabilities;
+}
+
+static void
+workspace_handle_removed(
+	void *data, struct ext_workspace_handle_v1 *ext_workspace_handle_v1)
+{
+	struct workspace *ws = data;
+	fprintf(stderr, "Workspace \"%s\" removed\n", ws->name);
+	wl_list_remove(&ws->link);
+	free(ws);
+}
+
+static const struct ext_workspace_handle_v1_listener
+	ext_workspace_handle_v1_listener = {
+		.id = workspace_handle_id,
+		.name = workspace_handle_name,
+		.coordinates = workspace_handle_coordinates,
+		.state = workspace_handle_state,
+		.capabilities = workspace_handle_capabilities,
+		.removed = workspace_handle_removed,
+};
+
+static void
+workspace_manager_workspace_group(void *data,
+	struct ext_workspace_manager_v1 *ext_workspace_manager_v1,
+	struct ext_workspace_group_handle_v1 *workspace_group)
+{
+}
+
+static void
+workspace_manager_workspace(void *data,
+	struct ext_workspace_manager_v1 *ext_workspace_manager_v1,
+	struct ext_workspace_handle_v1 *workspace)
+{
+	struct workspace *ws = calloc(1, sizeof(struct workspace));
+	ws->client_state = data;
+	ws->handle = workspace;
+	wl_list_insert(&ws->client_state->workspaces, &ws->link);
+	ext_workspace_handle_v1_add_listener(workspace, &ext_workspace_handle_v1_listener, ws);
+}
+
+static void
+print_workspace_info(struct workspace *ws)
+{
+	printf("workspace:\n");
+	printf("- name=%s\n", ws->name);
+	printf("- id=%s\n", ws->id);
+	printf("- coordinates=(");
+	int32_t *coords = ws->coordinates.data;
+	for (size_t i = 0; i < ws->coordinates.size / sizeof(int32_t); i++) {
+		printf("%d ", coords[i]);
+	}
+	printf(")\n");
+	printf("- state=(");
+	if (ws->state & EXT_WORKSPACE_HANDLE_V1_STATE_ACTIVE) {
+		printf("active ");
+	}
+	if (ws->state & EXT_WORKSPACE_HANDLE_V1_STATE_URGENT) {
+		printf("urgent ");
+	}
+	if (ws->state & EXT_WORKSPACE_HANDLE_V1_STATE_HIDDEN) {
+		printf("hidden ");
+	}
+	printf(")\n");
+	printf("- capabilities=(");
+	if (ws->caps
+		& EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_ACTIVATE) {
+		printf("activate ");
+	}
+	if (ws->caps
+		& EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_DEACTIVATE) {
+		printf("deactivate ");
+	}
+	if (ws->caps & EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_REMOVE) {
+		printf("remove ");
+	}
+	if (ws->caps & EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_ASSIGN) {
+		printf("assign ");
+	}
+	printf(")\n");
+}
+
+static void
+workspace_manager_done(
+	void *data, struct ext_workspace_manager_v1 *ext_workspace_manager_v1)
 {
 	struct client_state *state = data;
-	xdg_surface_ack_configure(xdg_surface, serial);
-
-	struct wl_buffer *buffer = draw_frame(state->wl_shm, state->width,
-		state->height, state->defaults.colors);
-	wl_surface_attach(state->wl_surface, buffer, 0, 0);
-	wl_surface_commit(state->wl_surface);
+	printf("============= received .done event ===========\n");
+	struct workspace *handle;
+	wl_list_for_each(handle, &state->workspaces, link) {
+		print_workspace_info(handle);
+	}
+	printf("===========================================\n");
 }
-
-static const struct xdg_surface_listener xdg_surface_listener = {
-	.configure = handle_xdg_surface_configure,
-};
 
 static void
-handle_xdg_wm_base_ping(
-	void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial)
+workspace_manager_finished(
+	void *data, struct ext_workspace_manager_v1 *ext_workspace_manager_v1)
 {
-	xdg_wm_base_pong(xdg_wm_base, serial);
 }
 
-static const struct xdg_wm_base_listener xdg_wm_base_listener = {
-	.ping = handle_xdg_wm_base_ping,
+static const struct ext_workspace_manager_v1_listener
+	ext_workspace_manager_v1_listener = {
+		.workspace_group = workspace_manager_workspace_group,
+		.workspace = workspace_manager_workspace,
+		.done = workspace_manager_done,
+		.finished = workspace_manager_finished,
 };
 
 static void
@@ -169,23 +204,11 @@ handle_registry_global(void *data, struct wl_registry *wl_registry,
 	uint32_t name, const char *interface, uint32_t version)
 {
 	struct client_state *state = data;
-	if (!strcmp(interface, wl_shm_interface.name)) {
-		state->wl_shm = wl_registry_bind(
-			wl_registry, name, &wl_shm_interface, 1);
-	} else if (!strcmp(interface, wl_compositor_interface.name)) {
-		state->wl_compositor = wl_registry_bind(
-			wl_registry, name, &wl_compositor_interface, 4);
-	} else if (!strcmp(interface, wl_subcompositor_interface.name)) {
-		state->wl_subcompositor = wl_registry_bind(
-			wl_registry, name, &wl_subcompositor_interface, 1);
-	} else if (!strcmp(interface, xdg_wm_base_interface.name)) {
-		state->xdg_wm_base = wl_registry_bind(
-			wl_registry, name, &xdg_wm_base_interface, 1);
-		xdg_wm_base_add_listener(
-			state->xdg_wm_base, &xdg_wm_base_listener, state);
-	} else if (!strcmp(interface, wl_seat_interface.name)) {
-		state->wl_seat = wl_registry_bind(
-			wl_registry, name, &wl_seat_interface, 8);
+	if (!strcmp(interface, ext_workspace_manager_v1_interface.name)) {
+		state->workspace_manager = wl_registry_bind(wl_registry, name,
+			&ext_workspace_manager_v1_interface, 1);
+		ext_workspace_manager_v1_add_listener(state->workspace_manager,
+			&ext_workspace_manager_v1_listener, state);
 	}
 }
 
@@ -214,82 +237,108 @@ on_wayland_event(uv_poll_t *handle, int status, int events)
 	wl_display_flush(state->wl_display);
 }
 
-static void
-handle_xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
-	int32_t width, int32_t height, struct wl_array *states)
+static struct workspace *
+find_workspace_by_name(struct client_state *state, const char *name)
 {
-	struct client_state *state = data;
-	if (width > 0 || height > 0) {
-		state->width = width;
-		state->height = height;
-	} else if (state->width == 0 || state->height == 0) {
-		state->width = state->defaults.width;
-		state->height = state->defaults.height;
+	struct workspace *ws;
+	wl_list_for_each(ws, &state->workspaces, link) {
+		if (ws->name && strcmp(ws->name, name) == 0) {
+			return ws;
+		}
 	}
+	return NULL;
 }
 
 static void
-handle_xdg_toplevel_close(void *data, struct xdg_toplevel *xdg_toplevel)
+handle_command(struct client_state *state, const char *line)
 {
-	_exit(0);
+	char action[64];
+	char name[256];
+	// let name consume all the rest of the line including spaces
+	if (sscanf(line, "%63s  %255[^\n]", action, name) != 2) {
+		fprintf(stderr, "Invalid command format. Use: <action> "
+				"<workspace-name>\n");
+		return;
+	}
+
+	struct workspace *ws = find_workspace_by_name(state, name);
+	if (!ws) {
+		fprintf(stderr, "Workspace not found: %s\n", name);
+		return;
+	}
+	if (strcmp(action, "activate") == 0) {
+		ext_workspace_handle_v1_activate(ws->handle);
+	} else if (strcmp(action, "deactivate") == 0) {
+		ext_workspace_handle_v1_deactivate(ws->handle);
+	} else if (strcmp(action, "assign") == 0) {
+		// TODO
+	} else if (strcmp(action, "remove") == 0) {
+		ext_workspace_handle_v1_remove(ws->handle);
+	} else {
+		fprintf(stderr, "Unknown action: %s\n", action);
+	}
+	ext_workspace_manager_v1_commit(state->workspace_manager);
+	wl_display_flush(state->wl_display);
 }
 
 static void
-handle_xdg_toplevel_configure_bounds(void *data,
-	struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height)
+on_stdin_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf)
 {
+	struct client_state *state = stream->data;
+	if (nread < 0) {
+		if (nread == UV_EOF) {
+			uv_close((uv_handle_t *)stream, NULL);
+		}
+	} else if (nread > 0) {
+		char *newline = strrchr(buf->base, '\n');
+		if (newline) {
+			*newline = '\0';
+			handle_command(state, buf->base);
+		} else {
+			fprintf(stderr, "Missing new line\n");
+		}
+	}
+	free(buf->base);
 }
 
 static void
-handle_xdg_toplevel_wm_capabilities(void *data,
-	struct xdg_toplevel *xdg_toplevel, struct wl_array *capabilities)
+alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)
 {
+	buf->base = malloc(suggested_size);
+	buf->len = suggested_size;
 }
-
-static const struct xdg_toplevel_listener xdg_toplevel_listener = {
-	.configure = handle_xdg_toplevel_configure,
-	.close = handle_xdg_toplevel_close,
-	.configure_bounds = handle_xdg_toplevel_configure_bounds,
-	.wm_capabilities = handle_xdg_toplevel_wm_capabilities,
-};
 
 int
 main(int argc, char *argv[])
 {
-	struct client_state state = {
-		.defaults =
-			{
-				.width = 600,
-				.height = 600,
-				.colors = {0xff666666, 0xffeeeeee},
-			},
-	};
+	printf("Type commands in the format: <action> <workspace-name>\n"
+	       "Available actions:\n"
+	       "  activate\n"
+	       "  deactivate\n"
+	       "  assign\n"
+	       "  remove\n");
+
+	struct client_state state = {};
+	wl_list_init(&state.workspaces);
 	state.wl_display = wl_display_connect(NULL);
 	state.wl_registry = wl_display_get_registry(state.wl_display);
 	wl_registry_add_listener(
 		state.wl_registry, &wl_registry_listener, &state);
 	wl_display_roundtrip(state.wl_display);
-
-	state.wl_pointer = wl_seat_get_pointer(state.wl_seat);
-	state.wl_keyboard = wl_seat_get_keyboard(state.wl_seat);
-
-	state.wl_surface = wl_compositor_create_surface(state.wl_compositor);
-	state.xdg_surface = xdg_wm_base_get_xdg_surface(
-		state.xdg_wm_base, state.wl_surface);
-	xdg_surface_add_listener(
-		state.xdg_surface, &xdg_surface_listener, &state);
-	state.xdg_toplevel = xdg_surface_get_toplevel(state.xdg_surface);
-	xdg_toplevel_add_listener(
-		state.xdg_toplevel, &xdg_toplevel_listener, &state);
-	xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
-	wl_surface_commit(state.wl_surface);
-	wl_display_flush(state.wl_display);
+	assert(state.workspace_manager);
 
 	state.loop = uv_default_loop();
 	state.poll_handle.data = &state;
 	uv_poll_init(state.loop, &state.poll_handle,
 		wl_display_get_fd(state.wl_display));
+	wl_display_flush(state.wl_display);
 	uv_poll_start(&state.poll_handle, UV_READABLE, on_wayland_event);
+
+	state.stdin_pipe.data = &state;
+	uv_pipe_init(state.loop, &state.stdin_pipe, 0);
+	uv_pipe_open(&state.stdin_pipe, 0);
+	uv_read_start(
+		(uv_stream_t *)&state.stdin_pipe, alloc_buffer, on_stdin_read);
 
 	uv_run(state.loop, UV_RUN_DEFAULT);
 
