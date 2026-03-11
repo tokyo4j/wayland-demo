@@ -82,6 +82,7 @@ struct client_state {
 
 	uv_loop_t *loop;
 	uv_poll_t poll_handle;
+	uv_timer_t timer_handle;
 
 	struct {
 		int width, height;
@@ -223,6 +224,16 @@ on_wayland_event(uv_poll_t *handle, int status, int events)
 }
 
 static void
+on_timer(uv_timer_t *handle)
+{
+	struct client_state *state = handle->data;
+	printf("setting title to empty\n");
+	xdg_toplevel_set_title(state->xdg_toplevel, "");
+	wl_surface_commit(state->wl_surface);
+	wl_display_flush(state->wl_display);
+}
+
+static void
 handle_xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 	int32_t width, int32_t height, struct wl_array *states)
 {
@@ -290,6 +301,7 @@ main(int argc, char *argv[])
 	xdg_toplevel_add_listener(
 		state.xdg_toplevel, &xdg_toplevel_listener, &state);
 	xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
+	xdg_toplevel_set_maximized(state.xdg_toplevel);
 	state.zxdg_toplevel_decoration_v1 =
 		zxdg_decoration_manager_v1_get_toplevel_decoration(
 			state.zxdg_decoration_manager_v1, state.xdg_toplevel);
@@ -303,6 +315,10 @@ main(int argc, char *argv[])
 	uv_poll_init(state.loop, &state.poll_handle,
 		wl_display_get_fd(state.wl_display));
 	uv_poll_start(&state.poll_handle, UV_READABLE, on_wayland_event);
+
+	state.timer_handle.data = &state;
+	uv_timer_init(state.loop, &state.timer_handle);
+	uv_timer_start(&state.timer_handle, on_timer, 2000, 0);
 
 	uv_run(state.loop, UV_RUN_DEFAULT);
 
