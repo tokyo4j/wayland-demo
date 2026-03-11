@@ -219,10 +219,10 @@ handle_xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 	int32_t width, int32_t height, struct wl_array *states)
 {
 	struct client_state *state = data;
-	if (width > 0 || height > 0) {
+	if (width > 0 && height > 0) {
 		state->width = width;
 		state->height = height;
-	} else if (state->width == 0 || state->height == 0) {
+	} else {
 		state->width = state->defaults.width;
 		state->height = state->defaults.height;
 	}
